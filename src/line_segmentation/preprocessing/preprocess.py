@@ -5,28 +5,28 @@ import time
 
 import cv2
 from skimage import measure
-
 import matplotlib
 
-from src.line_segmentation.utils.util import save_img
-
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
+from src.line_segmentation.utils.util import save_img
+import matplotlib.pyplot as plt
 import numpy as np
+
+# ----------------------------------------------------------------------------#
 
 def preprocess(image, small_component_ratio):
     # -------------------------------
     start = time.time()
     # -------------------------------
 
-    # find the text area and wipe the rest
+    # Finding the text area and wiping the rest.
     image = wipe_outside_textarea(image)
 
-    # Remove components which are too small in terms of area
+    # Removing components which are too small in terms of area.
     image = remove_small_components(image, small_component_ratio)
 
-    # Remove components which are too big in terms of area -> after removing the small ones!
+    # Removing components which are too big in terms of area -> after removing the small ones!
     image = remove_big_components(image)
 
     image[image > 255] = 255
@@ -35,6 +35,7 @@ def preprocess(image, small_component_ratio):
     stop = time.time()
     logging.info("finished after: {diff} s".format(diff=stop - start))
     # -------------------------------
+
     return image
 
 
@@ -43,40 +44,41 @@ def wipe_outside_textarea(image):
     # Save a copy of the original image
     ORIGINAL = image
 
-    # Get only green channel
-    image = image[:, :, 1]
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-    # SMOOTH IMAGE ######################################################################
-    filter_size_H = 64
-    filter_size_V = 192
+    # Image smoothing.
+    filter_size_H = 1
+    filter_size_V = 1
     kernel = np.ones((filter_size_V, filter_size_H)) / filter_size_H
-    # Apply averaging filter
+    
+    # Applying average filter.
     image = cv2.filter2D(image, -1, kernel)
+
     #SMOOTH_IMAGE = image
     # Draw a vertical line in the middle of the image to prevent 2 paragraphs to be split
-    image[5:-5, int(image.shape[1] / 2) - 5:int(image.shape[1] / 2) + 5] = 255
+    #image[5:-5, int(image.shape[1] / 2) - 5:int(image.shape[1] / 2) + 5] = 255
+    #cv2.imwrite("10__imgreturned.png", image)
 
-    # GET BIGGEST COMPONENT #############################################################
-    # Get contour points of the binary polygon image
+    # Getting contour points of the binary polygon image.
     tmp = np.ones((image.shape[0], image.shape[1], 3), dtype=np.uint8)
-    cc = measure.find_contours(image, 200, fully_connected='high')[0]
-    # Swap the columns of cc as the coordinate are reversed
+    cc = measure.find_contours(image, 40, fully_connected='high')[0]
+    
+    # Swapping the columns of cc as the coordinate are reversed.
     cc[:, 0], cc[:, 1] = cc[:, 1], cc[:, 0].copy()
-    # Cast to int to make, once again, cv2.fillPoly() happy
     cc = [cc.astype(np.int32, copy=False)]
     cv2.fillPoly(tmp, cc, (255, 255, 255))
-    # DEBUG
-    #save_img(tmp, path=os.path.join('./output', 'smoothed_image.png'), show=False)
 
     # WIPE EVERYTHING OUTSIDE THIS AREA #################################################
     # Use 'tmp' as mask on the original image. Pixel with value '0' are text.
-    tmp = tmp - ORIGINAL
+    #tmp = tmp - ORIGINAL
     # Prepare image in RBG format s.t. we can use the coordinates systems of tmp
-    image = np.stack((image,) * 3, axis=-1)
+    #image = np.stack((image,) * 3, axis=-1)
     # Wipe the pixels which are not selected by the mask
-    image[np.where(tmp != 0)] = 0
-    # DEBUG
-    #save_img(image, path=os.path.join('./output', 'filtered_image.png'), show=False)
+    #image[np.where(tmp != 0)] = 0
+
+    # Inverting the mask to keep white text.
+    mask_gray = cv2.cvtColor(tmp, cv2.COLOR_RGB2GRAY)
+    image[np.where(mask_gray == 0)] = 0
 
     """
     # FILTER WITH VERTICAL PROJECTION PROFILE ###########################################
@@ -121,32 +123,31 @@ def wipe_outside_textarea(image):
     """
     return image
 
+# ----------------------------------------------------------------------------#
 
 def remove_small_components(image, small_component_ratio):
-    # Find CC
-    cc_properties = measure.regionprops(measure.label(image[:, :, 1], background=0), cache=True)
+    # Finding CCs.
+    cc_properties = measure.regionprops(measure.label(image, background=0), cache=True)
 
-    # Compute average metrics
     avg_area = np.mean([item.area for item in cc_properties])
 
-    # Remove all small components
+    # Removing all small components.
     for cc in cc_properties:
         if cc.area < small_component_ratio * avg_area:
-            # Wipe the cc
+            # Wipe the cc.
             image[(cc.coords[:, 0], cc.coords[:, 1])] = 0
     return image
 
+# ----------------------------------------------------------------------------#
 
 def remove_big_components(image):
-    # Find CC
-    cc_properties = measure.regionprops(measure.label(image[:, :, 1], background=0), cache=True)
+    cc_properties = measure.regionprops(measure.label(image, background=0), cache=True)
 
-    # Compute average metrics
     avg_area = np.mean([item.area for item in cc_properties])
 
-    # Remove all small components
+    # Remove all big components.
     for cc in cc_properties:
         if cc.area > 10 * avg_area:
-            # Wipe the cc
+            # Wipe the cc.
             image[(cc.coords[:, 0], cc.coords[:, 1])] = 0
     return image
