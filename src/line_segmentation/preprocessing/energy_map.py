@@ -12,6 +12,7 @@ import src
 from src.line_segmentation.utils.unused_but_keep_them import blur_image
 from src.line_segmentation.utils.util import calculate_asymmetric_distance, save_img
 
+# ----------------------------------------------------------------------------#
 
 def create_heat_map_visualization(ori_energy_map):
     # -------------------------------
@@ -32,6 +33,7 @@ def create_heat_map_visualization(ori_energy_map):
 
     return heatmap
 
+# ----------------------------------------------------------------------------#
 
 def prepare_energy(ori_map, left_column, right_column, y):
     """
@@ -50,6 +52,8 @@ def prepare_energy(ori_map, left_column, right_column, y):
 
     return ori_map
 
+# ----------------------------------------------------------------------------#
+
 def create_distance_matrix(img_shape, centroids, asymmetric=False, side_length=1000):
     # -------------------------------
     start = time.time()
@@ -59,7 +63,7 @@ def create_distance_matrix(img_shape, centroids, asymmetric=False, side_length=1
     center_template = np.array([[np.ceil(side_length / 2), np.ceil(side_length / 2)]])
     pixel_coordinates = np.asarray([[x, y] for x in range(template.shape[0]) for y in range(template.shape[1])])
 
-    # calculate distance template
+    # Calculating the distance template.
     # TODO save template for speed up
     if asymmetric:
         template = np.array([calculate_asymmetric_distance(center_template, pxl, 1, 10) for pxl in pixel_coordinates]) \
@@ -75,7 +79,6 @@ def create_distance_matrix(img_shape, centroids, asymmetric=False, side_length=1
     # round the centroid coordinates to ints to use them as array index
     centroids = np.rint(centroids).astype(int)
 
-    # for each centroid
     for centroid in centroids:
         pos_v, pos_h = (centroid - np.ceil(side_length / 2)).astype(int)  # offset
         v_range1 = slice(max(0, pos_v), max(min(pos_v + template.shape[0], distance_matrix.shape[0]), 0))
@@ -96,27 +99,28 @@ def create_distance_matrix(img_shape, centroids, asymmetric=False, side_length=1
     # distance_matrix = distance_matrix.reshape((centroids.shape[0], img_shape[0] * img_shape[1]))
     return distance_matrix.flatten()
 
+# ----------------------------------------------------------------------------#
 
 def create_energy_map(img, blurring=True, projection=True, asymmetric=False):
     # -------------------------------
     start = time.time()
     # -------------------------------
-    # get the cc, all the centroids and the areas of the cc
+
     cc, centroids, areas = find_cc_centroids_areas(img)
 
-    # a list of all the pixels in the image as tuple
+    # A list of all the pixels in the image as tuple.
     centroids = np.asarray([[point[0], point[1]] for point in centroids])
 
-    # normalise between 0 nd 1
+    # Normalise between 0 and 1.
     areas = (areas - np.min(areas)) / (np.max(areas) - np.min(areas))
 
-    # bring it between -1 and 1
+    # Bring it between -1 and 1.
     areas = areas - np.mean(areas)
 
-    # make it all negative
+    # Making them all negative.
     areas = - np.abs(areas)
 
-    # scale it with punishment
+    # Scaling them with a punishment.
     areas *= 500
 
     # creating distance matrix
@@ -124,36 +128,37 @@ def create_energy_map(img, blurring=True, projection=True, asymmetric=False):
     # distance_matrix = distance.cdist(pixel_coordinates, centroids[0:10])
     distance_matrix = create_distance_matrix(img.shape[0:2], centroids, asymmetric=asymmetric)
 
-    # scale down the distance
+    # Scaling them down with the distance.
     distance_matrix /= 30
 
-    # make sure the distance is > 1
+    # Making sure the distance is > 1
     distance_matrix += 1
 
-    # We give all centroids the same energy (100)
+    # We give all centroids the same energy (100).
     energy_background = ((np.ones(img.shape[0] * img.shape[1]) * 100) / distance_matrix).transpose()
 
-    # Get the text location and assign it half the energy
-    locs = np.array(np.where(img[:, :, 0].reshape(-1) == 0))[0:2, :]
+    # Get the text location and assign it half the energy.
+    locs = np.array(np.where(img.reshape(-1) == 0))[0:2, :]
+
     energy_text = energy_background
     energy_text[locs] = 0
 
-    # sum up the received energy for each pixel
+    # Sum up the received energy for each pixel.
     energy_map = energy_background + energy_text
     #energy_map = energy_background / 100000
     energy_map = energy_map.reshape(img.shape[0:2])
 
     if blurring:
-        # blur the map
+        # Blur the map.
         blurred_energy_map = blur_image(img=energy_map, filter_size=300)
         energy_map = blurred_energy_map
 
     if projection:
         projection_profile = create_projection_profile(energy_map)
-        # scale it between 0 and max(energy_map) / 2
+        # Scale it between 0 and max(energy_map) / 2
         projection_profile *= np.max(energy_map) / 2
 
-        # blur projection profile
+        # Blur projection profile.
         projection_matrix = np.zeros(img.shape[0:2])
         projection_matrix = (projection_matrix.transpose() + projection_profile).transpose()
         projection_matrix = blur_image(projection_matrix, filter_size=1000)
@@ -162,29 +167,29 @@ def create_energy_map(img, blurring=True, projection=True, asymmetric=False):
         energy_map = energy_map + projection_matrix
 
     if True:
-        # Cross-shaped kernel
+        # Cross-shaped kernel.
         filter_size_H = img.shape[0]
         filter_size_V = img.shape[1]
         kernel = np.zeros((filter_size_V, filter_size_H))
         kernel[int(filter_size_V/2), :] = 1
         kernel[:, int(filter_size_H/2)] = 1
 
-        # Apply cross filter
+        # Apply cross filter.
         smoothed = cv2.filter2D(energy_map, -1, kernel)
 
-        # Smoothing kernel
+        # Smoothing kernel.
         filter_size_H = 32
         filter_size_V = 32
         kernel = np.ones((filter_size_V, filter_size_H)) / (filter_size_V*filter_size_H)
 
-        # Apply smoothing filter
+        # Apply smoothing filter.
         smoothed = cv2.filter2D(smoothed, -1, kernel)
 
-        # Remove the mean and clip at 0
+        # Remove the mean and clip at 0.
         smoothed -= np.mean(smoothed)
         smoothed[smoothed < 0] = 0
 
-        # Normalize it between 0 and max(energy_map)
+        # Normalize it between 0 and max(energy_map).
         smoothed = ((smoothed - np.min(smoothed)) * np.max(energy_map)) / (np.max(smoothed) - np.min(smoothed))
 
         # DEBUG
@@ -201,20 +206,23 @@ def create_energy_map(img, blurring=True, projection=True, asymmetric=False):
 
     return energy_map, cc
 
+# ----------------------------------------------------------------------------#
 
 def create_projection_profile(energy_map):
-    # creating the horizontal projection profile
+    # Creating the horizontal projection profile and smoothing it.
     pp = np.sum(energy_map, axis=1)
-    # smoothing it
     WINDOW_SIZE = 100
     pp = smooth(pp, WINDOW_SIZE)[int(WINDOW_SIZE/2):-int(WINDOW_SIZE/2-1)]
-    # wipe everything below average
+
+    # Wiping everything below average.
     pp -= np.mean(pp)
     pp[pp < 0] = 0
-    # normalize it between 0-1
+
+    # Normalising between 0-1.
     pp = (pp - np.min(pp)) / (np.max(pp) - np.min(pp))
     return pp
 
+# ----------------------------------------------------------------------------#
 
 def smooth(x, window_len=11, window='hanning'):
     """smooth the data using a window with requested size.
@@ -270,19 +278,17 @@ def smooth(x, window_len=11, window='hanning'):
     y = np.convolve(w / w.sum(), s, mode='valid')
     return y
 
-
+# ----------------------------------------------------------------------------#
 
 def find_cc_centroids_areas(img):
     # -------------------------------
     start = time.time()
     # -------------------------------
-    #############################################
-    # Find CC
+
     cc_labels, cc_properties = get_connected_components(img)
 
     amount_of_properties = 0
 
-    # Compute average metrics
     avg_area = np.mean([item.area for item in cc_properties])
     std_area = np.std([item.area for item in cc_properties])
     avg_height = np.mean([item.bbox[2] - item.bbox[0] for item in cc_properties])
@@ -291,9 +297,12 @@ def find_cc_centroids_areas(img):
     while amount_of_properties != len(cc_properties):
         # for _ in range(2):
         amount_of_properties = len(cc_properties)
-        image = img[:, :, 1]
-        #############################################
-        # Cut all large components into smaller components
+        if len(img.shape) == 3 and img.shape[2] == 3:
+            image = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        else:
+            image = img.copy()
+        
+        # Cut all large components into smaller components.
         coef = 1.5
         for item in cc_properties:
             if item.area > coef * avg_area \
@@ -312,20 +321,21 @@ def find_cc_centroids_areas(img):
                     image[y1:y2, np.round((x1 + x2) / 2).astype(int)] = 0
                     image[np.round((y1 + y2) / 2).astype(int), x1:x2] = 0
 
-        img[:, :, 1] = image
+        img = image
 
         # Re-find CC
         cc_labels, cc_properties = get_connected_components(img)
-        #############################################
 
-    # Collect CC centroids
+    # Collect CC centroids.
     all_centroids = np.asarray([cc.centroid[0:2] for cc in cc_properties])
+    print("Shape of all_centroids:", all_centroids.shape)
 
-    # Collect CC sizes
+    # Collect CC sizes.
     all_areas = np.asarray([cc.area for cc in cc_properties])
 
-    # Discard outliers & sort
+    # Discard outliers & sort.
     no_outliers = detect_outliers(all_areas, avg_area, std_area)
+
     centroids = all_centroids[no_outliers, :]
     filtered_area = all_areas[no_outliers]
     all_areas = filtered_area[np.argsort(centroids[:, 0])]
@@ -338,12 +348,14 @@ def find_cc_centroids_areas(img):
 
     return (cc_labels, cc_properties), all_centroids, all_areas
 
+# ----------------------------------------------------------------------------#
 
 def get_connected_components(img):
-    cc_labels = measure.label(img[:, :, 1], background=0)
+    cc_labels = measure.label(img, background=0)
     cc_properties = measure.regionprops(cc_labels, cache=True)
     return cc_labels, cc_properties
 
+# ----------------------------------------------------------------------------#
 
 def detect_outliers(area, mean, std):
     # -------------------------------
