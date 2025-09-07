@@ -4,6 +4,7 @@ import sys
 import cv2
 import numba
 import numpy as np
+import random
 
 import src.line_segmentation
 
@@ -92,6 +93,70 @@ def draw_seams(img, seams, bidirectional=True):
 
 # ----------------------------------------------------------------------------#
 
+def draw_colored_seams(original_img, seams, thickness=3):
+    """
+    Colorize entire text content line by line using the seam boundaries.
+
+    Args:
+        original_img (np.ndarray): Grayscale or BGR input image.
+        seams (list): List of seam polylines.
+        thickness (int): Used to smooth seam masks if needed.
+    Returns:
+        np.ndarray: Colorized image with different colors per text line.
+    """
+    # Ensure image is grayscale
+    if len(original_img.shape) == 3:
+        gray = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = original_img.copy()
+
+    # Invert so text is 1, background 0
+    binary = (gray < 128).astype(np.uint8)
+
+    # Convert base to white background
+    h, w = gray.shape
+    color_img = np.ones((h, w, 3), dtype=np.uint8) * 255
+
+    # Convert seams into usable polylines
+    x_axis = np.expand_dims(np.arange(len(seams[0])), -1)
+    seams = [
+        np.concatenate((x, np.expand_dims(seam, -1)), axis=1)
+        for seam, x in zip(seams, itertools.repeat(x_axis))
+    ]
+
+    # Sort seams top to bottom
+    seams_sorted = sorted(seams, key=lambda s: np.mean(s[:, 1]))
+
+    # Add top and bottom boundaries for masking
+    seam_boundaries = [np.vstack([[0, 0], [w-1, 0]])] + seams_sorted + [np.vstack([[0, h-1], [w-1, h-1]])]
+
+    # Loop over line regions between seams
+    for line_id in range(len(seam_boundaries)-1):
+        upper = seam_boundaries[line_id]
+        lower = seam_boundaries[line_id+1]
+
+        # Build polygon between upper and lower seam
+        poly = np.vstack([upper, np.flipud(lower)])
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(mask, [poly.astype(np.int32)], 255)
+
+        # Random color for this line
+        color = (
+            random.randint(50, 255),
+            random.randint(50, 255),
+            random.randint(50, 255)
+        )
+
+        # Apply color only where there is text
+        line_mask = cv2.bitwise_and(binary, binary, mask=mask)
+        color_layer = np.zeros_like(color_img, dtype=np.uint8)
+        color_layer[:] = color
+        color_img = np.where(line_mask[..., None] == 1, color_layer, color_img)
+
+    return color_img
+
+# ----------------------------------------------------------------------------#
+
 def draw_seams_red(img, seams, bidirectional=True):
     x_axis = np.expand_dims(np.array(range(0, len(seams[0]))), -1)
     seams = [np.concatenate((x, np.expand_dims(seam, -1)), 
@@ -103,7 +168,7 @@ def draw_seams_red(img, seams, bidirectional=True):
 
 # ----------------------------------------------------------------------------#
 
-def get_seams(ori_energy_map, penalty_reduction, seam_every_x_pxl):
+def get_seams(ori_energy_map, penalty_reduction, seam_every_x_pxl, expected_lines=None):
     seams = [] # List with all seams
     left_column_energy_map = np.copy(ori_energy_map[:, 0])   # Left most column of the energy map.
     right_column_energy_map = np.copy(ori_energy_map[:, -1]) # Right most column of the energy map.
@@ -120,13 +185,120 @@ def get_seams(ori_energy_map, penalty_reduction, seam_every_x_pxl):
     # the x coordinate is basically the index in the array.
     seams = np.array([np.array(s)[:, 1] for s in seams])
 
+    if expected_lines is not None:
+        seams = adjust_seam_count(seams, expected_lines, ori_energy_map.shape[0])
+
     return seams
 
 # ----------------------------------------------------------------------------#
 
-def post_process_seams(energy_map, seams):
+def adjust_seam_count(seams, expected_lines, image_height):
+    """
+    Adjust the number of seams to match the expected_lines parameter.
+    
+    Args:
+        seams: Array of seams
+        expected_lines: Desired number of lines/seams
+        image_height: Height of the image
+    
+    Returns:
+        Adjusted array of seams
+    """
+    current_count = len(seams)
+
+    if current_count == expected_lines:
+        return seams
+    
+    # Sorting seams by their average y-position.
+    sorted_indices = np.argsort([np.mean(seam) for seam in seams])
+    sorted_seams = seams[sorted_indices]
+
+    if current_count > expected_lines:
+        # Removing excess seams with highest energy or most irregular paths.
+        # This is the most common case.
+        return remove_excess_seams(sorted_seams, expected_lines)
+    else:
+        # Adding missing seams (interpolating between existing seams).
+        # This is a very rare case, which might never happen.
+        return add_missing_seams(sorted_seams, expected_lines, image_height)
+
+# ----------------------------------------------------------------------------#
+
+def remove_excess_seams(seams, target_count):
+    """
+    Remove excess seams to reach the target count.
+    Prioritize removing seams that are closest 
+    to each other or have highest energy.
+    """
+    if len(seams) <= target_count:
+        return seams
+    
+    # Calculates distances between adjacent seams.
+    distances = []
+    for i in range(len(seams) - 1):
+        avg_distance = np.mean(np.abs(seams[i] - seams[i + 1]))
+        distances.append(avg_distance)
+    
+    # Finding pairs with smallest distances (most likely to be redundant).
+    smallest_dist_indices = np.argsort(distances)[:len(seams) - target_count]
+
+    # Creating a mask to keep seams.
+    keep_mask = np.ones(len(seams), dtype=bool)
+    for idx in smallest_dist_indices:
+        keep_mask[idx + 1] = False  # Remove the second seam in close pairs.
+    
+    return seams[keep_mask]  
+
+# ----------------------------------------------------------------------------#
+
+def add_missing_seams(seams, target_count, image_height):
+    """
+    Adds missing seams by interpolating between existing seams.
+    """
+    if len(seams) >= target_count:
+        return seams
+    
+    additional_seams_needed = target_count - len(seams)
+    new_seams = []
+    
+    # Adding top and bottom boundaries if not already present.
+    all_seams = list(seams)
+    
+    # Interpolating between existing seams.
+    for i in range(len(all_seams) - 1):
+        if len(new_seams) >= additional_seams_needed:
+            break
+            
+        # Creating interpolated seam between current and next seam
+        interpolated_seam = (all_seams[i] + all_seams[i + 1]) // 2
+        new_seams.append(interpolated_seam)
+    
+    # If we still need more seams, create them at the boundaries.
+    while len(new_seams) < additional_seams_needed:
+        # Adding a seam at the top (average of top seam and top boundary).
+        top_seam = (all_seams[0] + np.zeros_like(all_seams[0])) // 2
+        new_seams.insert(0, top_seam)
+        
+        if len(new_seams) < additional_seams_needed:
+            # Adding a seam at the bottom (average of bottom seam and bottom boundary).
+            bottom_seam = (all_seams[-1] + np.full_like(all_seams[-1], image_height - 1)) // 2
+            new_seams.append(bottom_seam)
+    
+    # Combining and sorting all seams.
+    all_seams.extend(new_seams[:additional_seams_needed])
+    sorted_indices = np.argsort([np.mean(seam) for seam in all_seams])
+    
+    return np.array(all_seams)[sorted_indices]
+
+# ----------------------------------------------------------------------------#
+
+def post_process_seams(energy_map, seams, expected_lines=None):
     # Check that the seams are as wide as the image.
     assert energy_map.shape[1] == len(seams[0])
+
+    # Adjust seam count if expected_lines is specified.
+    if expected_lines is not None and len(seams) != expected_lines:
+        seams = adjust_seam_count(seams, expected_lines, energy_map.shape[0])
 
     # TODO implement a tabu-list to prevent two seams to repeatedly swap a third seam between them
     SAFETY_STOP = 100
