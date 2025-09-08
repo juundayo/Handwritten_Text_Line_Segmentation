@@ -141,19 +141,92 @@ def draw_colored_seams(original_img, seams):
         cv2.fillPoly(mask, [poly.astype(np.int32)], 255)
 
         # Random color for this line.
-        color = (
-            random.randint(50, 255),
-            random.randint(50, 255),
-            random.randint(50, 255)
-        )
+        colours = [
+            (255, 182, 193),  # Light Pink
+            (173, 216, 230),  # Light Blue
+            (152, 251, 152),  # Pale Green
+            (255, 239, 213),  # Papaya Whip
+            (221, 160, 221),  # Plum
+            (240, 230, 140),  # Khaki (Soft Yellow)
+            (176, 224, 230),  # Powder Blue
+            (255, 218, 185),  # Peach Puff
+            (230, 230, 250),  # Lavender
+            (245, 222, 179),  # Wheat
+            (175, 238, 238),  # Pale Turquoise
+            (255, 228, 225),  # Misty Rose
+            (240, 248, 255),  # Alice Blue
+            (245, 245, 220),  # Beige
+        ]
+    
+        # Use predefined pastel colors, cycle through if more lines
+        colour = colours[line_id % len(colours)]
 
         # Applying color only where there is text.
         line_mask = cv2.bitwise_and(binary, binary, mask=mask)
         color_layer = np.zeros_like(color_img, dtype=np.uint8)
-        color_layer[:] = color
+        color_layer[:] = colour
         color_img = np.where(line_mask[..., None] == 1, color_layer, color_img)
 
     return color_img
+
+# ----------------------------------------------------------------------------#
+
+def encode_lines_bitmap(original_img, seams):
+    """
+    Encodes line contents using bit encoding where:
+    0 = background
+    1-n = line value for each part of the text (n lines)
+    
+    Args:
+        original_img (np.ndarray): Grayscale or BGR input image.
+        seams (list): List of seam polylines.
+    
+    Returns:
+        np.ndarray: Bit-encoded image with values 0-n for background and lines.
+    """
+    # Ensuring the image is grayscale.
+    if len(original_img.shape) == 3:
+        gray = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = original_img.copy()
+
+    # Inverting so text is 1, background 0.
+    binary = (gray < 128).astype(np.uint8)
+
+    # Converting seams into usable polylines.
+    h, w = gray.shape
+    x_axis = np.expand_dims(np.arange(len(seams[0])), -1)
+    seams = [
+        np.concatenate((x, np.expand_dims(seam, -1)), axis=1)
+        for seam, x in zip(seams, itertools.repeat(x_axis))
+    ]
+
+    # Sorting seams from top to bottom.
+    seams_sorted = sorted(seams, key=lambda s: np.mean(s[:, 1]))
+
+    # Adding top and bottom boundaries for masking.
+    seam_boundaries = [np.vstack([[0, 0], [w-1, 0]])] + seams_sorted + [np.vstack([[0, h-1], [w-1, h-1]])]
+
+    # Creatting the output bitmap initialized with zeros (background).
+    encoded_img = np.zeros((h, w), dtype=np.uint8)
+
+    # Processing each line region.
+    for line_id in range(len(seam_boundaries)-1):
+        upper = seam_boundaries[line_id]
+        lower = seam_boundaries[line_id+1]
+
+        # Building polygon between upper and lower seams.
+        poly = np.vstack([upper, np.flipud(lower)])
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(mask, [poly.astype(np.int32)], 1)
+
+        # Getting text pixels within this line region.
+        line_text_pixels = cv2.bitwise_and(binary, binary, mask=mask)
+        
+        # Assigning line value (1-indexed) to text pixels in this region.
+        encoded_img[line_text_pixels == 1] = line_id + 1
+
+    return encoded_img
 
 # ----------------------------------------------------------------------------#
 
