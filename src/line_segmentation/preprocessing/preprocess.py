@@ -24,7 +24,7 @@ def preprocess(image, small_component_ratio):
     image = wipe_outside_textarea(image)
 
     # Removing components which are too small in terms of area.
-    image = remove_small_components(image, small_component_ratio)
+    # image = remove_small_components(image, small_component_ratio)
 
     # Removing components which are too big in terms of area -> after removing the small ones!
     image = remove_big_components(image)
@@ -38,6 +38,7 @@ def preprocess(image, small_component_ratio):
 
     return image
 
+# ----------------------------------------------------------------------------#
 
 def wipe_outside_textarea(image):
 
