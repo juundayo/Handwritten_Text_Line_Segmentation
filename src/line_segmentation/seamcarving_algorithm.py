@@ -93,9 +93,9 @@ def draw_seams(img, seams, bidirectional=True):
 
 # ----------------------------------------------------------------------------#
 
-def draw_colored_seams(original_img, seams, thickness=3):
+def draw_colored_seams(original_img, seams):
     """
-    Colorize entire text content line by line using the seam boundaries.
+    Colorizes entire text content line by line using the seam boundaries.
 
     Args:
         original_img (np.ndarray): Grayscale or BGR input image.
@@ -104,50 +104,50 @@ def draw_colored_seams(original_img, seams, thickness=3):
     Returns:
         np.ndarray: Colorized image with different colors per text line.
     """
-    # Ensure image is grayscale
+    # Ensuring the image is grayscale.
     if len(original_img.shape) == 3:
         gray = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
     else:
         gray = original_img.copy()
 
-    # Invert so text is 1, background 0
+    # Inverting so text is 1, background 0.
     binary = (gray < 128).astype(np.uint8)
 
-    # Convert base to white background
+    # Converting base to white background.
     h, w = gray.shape
     color_img = np.ones((h, w, 3), dtype=np.uint8) * 255
 
-    # Convert seams into usable polylines
+    # Converting seams into usable polylines.
     x_axis = np.expand_dims(np.arange(len(seams[0])), -1)
     seams = [
         np.concatenate((x, np.expand_dims(seam, -1)), axis=1)
         for seam, x in zip(seams, itertools.repeat(x_axis))
     ]
 
-    # Sort seams top to bottom
+    # Sorting seams from top to bottom.
     seams_sorted = sorted(seams, key=lambda s: np.mean(s[:, 1]))
 
-    # Add top and bottom boundaries for masking
+    # Adding top and bottom boundaries for masking.
     seam_boundaries = [np.vstack([[0, 0], [w-1, 0]])] + seams_sorted + [np.vstack([[0, h-1], [w-1, h-1]])]
 
-    # Loop over line regions between seams
+    # Looping over line regions between seams.
     for line_id in range(len(seam_boundaries)-1):
         upper = seam_boundaries[line_id]
         lower = seam_boundaries[line_id+1]
 
-        # Build polygon between upper and lower seam
+        # Building polygon between upper and lower seams.
         poly = np.vstack([upper, np.flipud(lower)])
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [poly.astype(np.int32)], 255)
 
-        # Random color for this line
+        # Random color for this line.
         color = (
             random.randint(50, 255),
             random.randint(50, 255),
             random.randint(50, 255)
         )
 
-        # Apply color only where there is text
+        # Applying color only where there is text.
         line_mask = cv2.bitwise_and(binary, binary, mask=mask)
         color_layer = np.zeros_like(color_img, dtype=np.uint8)
         color_layer[:] = color
